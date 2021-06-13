@@ -1,12 +1,12 @@
-#include <vulkan/vulkan.h>
 #define GLFW_INCLUDE_VULKAN
+#include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
-
 #include <iostream>
 #include <stdexcept>
 #include <cstdlib>
 #include <vector>
 #include <map>
+#include <set>
 #include <optional>
 
 const uint32_t WIDTH = 800;
@@ -46,8 +46,9 @@ void DestroyDebugUtilsMessengerEXT(
 struct QueueFamilyIndices
 {
 	std::optional<uint32_t> graphicsFamily;
+	std::optional<uint32_t> presentFamily;
 
-	bool isComplete() { return graphicsFamily.has_value(); }
+	bool isComplete() { return graphicsFamily.has_value() && presentFamily.has_value(); }
 };
 
 class HelloTriangleApplication
@@ -59,6 +60,8 @@ private:
 	VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
 	VkDevice m_device;
 	VkQueue m_graphicsQueue;
+	VkSurfaceKHR m_surface;
+	VkQueue m_presentQueue;
 public:
 	void run()
 	{
@@ -157,7 +160,7 @@ private:
 		int score = 0;
 
 		// Application can't function without geometry shaders
-		if (!deviceFeatures.geometryShader || !isDeviceHasQueueFamilies(device))
+		if (!deviceFeatures.geometryShader || !isDeviceQueueFamiliesSuitable(device))
 			return 0;
 
 		// Discrete GPUs have a significant performance advantage
@@ -209,18 +212,23 @@ private:
 		for (const auto& queueFamily : queueFamilies)
 		{
 			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-			{
-				indices.graphicsFamily = i++;
-			}
+				indices.graphicsFamily = i;
+
+			VkBool32 presentSupport = false;
+			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_surface, &presentSupport);
+			if (presentSupport)
+				indices.presentFamily = i;
 
 			if (indices.isComplete())
 				break;
+
+			i++;
 		}
 
 		return indices;
 	}
 
-	bool isDeviceHasQueueFamilies(const VkPhysicalDevice& device)
+	bool isDeviceQueueFamiliesSuitable(const VkPhysicalDevice& device)
 	{
 		QueueFamilyIndices indices = findQueueFamilies(device);
 		return indices.isComplete();
@@ -233,20 +241,26 @@ private:
 	{
 		QueueFamilyIndices indices = findQueueFamilies(m_physicalDevice);
 		
-		VkDeviceQueueCreateInfo queueCreateInfo{};
-		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
-		queueCreateInfo.queueCount = 1;
+		std::vector< VkDeviceQueueCreateInfo> queueCreateInfos;
+		std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
 		float queuePriority = 1.f;
-		queueCreateInfo.pQueuePriorities = &queuePriority;
+		for (uint32_t queueFamily : uniqueQueueFamilies)
+		{
+			VkDeviceQueueCreateInfo queueCreateInfo{};
+			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queueCreateInfo.queueFamilyIndex = queueFamily;
+			queueCreateInfo.queueCount = 1;
+			queueCreateInfo.pQueuePriorities = &queuePriority;
+			queueCreateInfos.push_back(queueCreateInfo);
+		}
 
 		VkPhysicalDeviceFeatures deviceFeatures{};
 
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		createInfo.pQueueCreateInfos = &queueCreateInfo;
-		createInfo.queueCreateInfoCount = 1;
+		createInfo.pQueueCreateInfos = queueCreateInfos.data();
+		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 		createInfo.pEnabledFeatures = &deviceFeatures;
 		createInfo.enabledExtensionCount = 0;
 
@@ -262,6 +276,15 @@ private:
 			throw std::runtime_error("failed to create logical device!");
 
 		vkGetDeviceQueue(m_device, indices.graphicsFamily.value(), 0, &m_graphicsQueue);
+		vkGetDeviceQueue(m_device, indices.presentFamily.value(), 0, &m_presentQueue);
+	}
+#pragma endregion
+
+#pragma region window surface
+	void createSurface()
+	{
+		if (glfwCreateWindowSurface(m_instance, m_window, nullptr, &m_surface) != VK_SUCCESS)
+			throw std::runtime_error("failed to create window surface!");
 	}
 #pragma endregion
 
@@ -280,6 +303,7 @@ private:
 	{
 		createInstance();
 		setupDebugMessenger();
+		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
 	}
@@ -298,6 +322,7 @@ private:
 			DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
 
 		vkDestroyDevice(m_device, nullptr);
+		vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 		vkDestroyInstance(m_instance, nullptr);
 		glfwDestroyWindow(m_window);
 		glfwTerminate();
