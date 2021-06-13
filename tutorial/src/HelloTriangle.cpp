@@ -84,10 +84,13 @@ private:
 	VkFormat m_swapChainImageFormat;
 	VkExtent2D m_swapChainExtent;
 	std::vector<VkImageView> m_swapChainImageViews;
+	std::vector<VkFramebuffer> m_swapChainFramebuffers;
 #pragma endregion
+#pragma region pipeline variables
 	VkRenderPass m_renderPass;
 	VkPipelineLayout m_pipelineLayout;
 	VkPipeline m_graphicsPipeline;
+#pragma endregion
 public:
 	void run()
 	{
@@ -707,6 +710,32 @@ private:
 	}
 #pragma endregion
 
+#pragma region framebuffers
+	void createFramebuffers()
+	{
+		m_swapChainFramebuffers.resize(m_swapChainImageViews.size());
+
+		for (size_t i = 0; i < m_swapChainImageViews.size(); i++)
+		{
+			VkImageView attachments[] = { m_swapChainImageViews[i] };
+
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = m_renderPass;
+			framebufferInfo.attachmentCount = 1;
+			framebufferInfo.pAttachments = attachments;
+			framebufferInfo.width = m_swapChainExtent.width;
+			framebufferInfo.height = m_swapChainExtent.height;
+			framebufferInfo.layers = 1;
+
+			if (vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_swapChainFramebuffers[i]) != VK_SUCCESS)
+				throw std::runtime_error("failed to create framebuffer!");
+		}
+
+
+	}
+#pragma endregion
+
 #pragma region general structure
 	void initWindow()
 	{
@@ -729,6 +758,7 @@ private:
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createFramebuffers();
 	}
 
 	void mainLoop()
@@ -743,6 +773,9 @@ private:
 	{
 		if (enableValidationLayers)
 			DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
+
+		for (auto framebuffer : m_swapChainFramebuffers)
+			vkDestroyFramebuffer(m_device, framebuffer, nullptr);
 
 		for (auto imageView:m_swapChainImageViews)
 			vkDestroyImageView(m_device, imageView, nullptr);
