@@ -62,11 +62,6 @@ project "tutorial"
         staticruntime "On"
         systemversion "latest"
 
-        defines
-        {
-            "WIN32"
-        }
-
     filter "configurations:Debug"
         defines 
         {
