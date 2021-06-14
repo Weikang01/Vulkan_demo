@@ -94,11 +94,15 @@ private:
 #pragma endregion
 	VkCommandPool m_commandPool;
 	std::vector<VkCommandBuffer> m_commandBuffers;
+#pragma region image acquire and present variables
 	std::vector<VkSemaphore> m_imageAvailableSemaphores;
 	std::vector<VkSemaphore> m_renderFinishedSemaphores;
 	std::vector<VkFence> m_inFlightFences;
 	std::vector<VkFence> m_imagesInFlight;
 	size_t m_curentFrame = 0;
+#pragma endregion
+	bool m_framebufferResized = false;
+
 public:
 	void run()
 	{
@@ -827,7 +831,18 @@ private:
 		vkResetFences(m_device, 1, &m_inFlightFences[m_curentFrame]);
 
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(m_device, m_swapChain, UINT64_MAX, m_imageAvailableSemaphores[m_curentFrame], VK_NULL_HANDLE, &imageIndex);
+
+		VkResult result = vkAcquireNextImageKHR(m_device, m_swapChain, 
+			UINT64_MAX, m_imageAvailableSemaphores[m_curentFrame], 
+			VK_NULL_HANDLE, &imageIndex);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+		{
+			recreateSwapChain();
+			return;
+		}
+		else if (result != VK_SUCCESS)
+			throw std::runtime_error("failed to acquire swap chain image!");
 
 		// Check if a previous frame is using this image (i.e. there is its fence to wait on)
 		if (m_imagesInFlight[imageIndex] != VK_NULL_HANDLE)
@@ -866,10 +881,66 @@ private:
 		presentInfo.pSwapchains = swapChains;
 		presentInfo.pImageIndices = &imageIndex;
 		presentInfo.pResults = nullptr;
-		vkQueuePresentKHR(m_presentQueue, &presentInfo);
+		result = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || 
+			result == VK_SUBOPTIMAL_KHR || m_framebufferResized)
+		{
+			m_framebufferResized = false;
+			recreateSwapChain();
+		}
+		else if (result != VK_SUCCESS)
+			throw std::runtime_error("failed to acquire swap chain image!");
 
 		vkQueueWaitIdle(m_presentQueue);
 		m_curentFrame = (m_curentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+	}
+#pragma endregion
+
+#pragma region swap chain recreation
+	void cleanupSwapChain()
+	{
+		for (auto framebuffer : m_swapChainFramebuffers)
+			vkDestroyFramebuffer(m_device, framebuffer, nullptr);
+
+		vkFreeCommandBuffers(m_device, m_commandPool, 
+			static_cast<uint32_t>(m_commandBuffers.size()), m_commandBuffers.data());
+		vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
+		vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+		vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+
+		for (auto imageView : m_swapChainImageViews)
+			vkDestroyImageView(m_device, imageView, nullptr);
+
+		vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+	}
+
+	void recreateSwapChain()
+	{
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(m_window, &width, &height);
+		while (width == 0 || height == 0)
+		{
+			glfwGetFramebufferSize(m_window, &width, &height);
+			glfwWaitEvents();
+		}
+
+		vkDeviceWaitIdle(m_device);
+
+		cleanupSwapChain();
+
+		createSwapChain();
+		createImageViews();
+		createRenderPass();
+		createGraphicsPipeline();
+		createFramebuffers();
+		createCommandBuffers();
+	}
+
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+	{
+		auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+		app->m_framebufferResized = true;
 	}
 #pragma endregion
 
@@ -882,6 +953,8 @@ private:
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
 		m_window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+		glfwSetWindowUserPointer(m_window, this);
+		glfwSetFramebufferSizeCallback(m_window, framebufferResizeCallback);
 	}
 
 	void initVulkan()
@@ -916,23 +989,15 @@ private:
 		if (enableValidationLayers)
 			DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
 
-		for (auto framebuffer : m_swapChainFramebuffers)
-			vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-
-		for (auto imageView:m_swapChainImageViews)
-			vkDestroyImageView(m_device, imageView, nullptr);
-
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
 			vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
 			vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
 			vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
 		}
+
+		cleanupSwapChain();
 		vkDestroyCommandPool(m_device, m_commandPool, nullptr);
-		vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
-		vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-		vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-		vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
 		vkDestroyDevice(m_device, nullptr);
 		vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
 		vkDestroyInstance(m_instance, nullptr);
