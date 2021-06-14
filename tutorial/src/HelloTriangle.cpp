@@ -1,4 +1,5 @@
 #define GLFW_INCLUDE_VULKAN
+#define GLM_FORCE_RADIANS
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -129,9 +130,9 @@ struct SwapChainSupportDetails
 
 struct UniformBufferObject
 {
-	glm::mat4 model;
-	glm::mat4 view;
-	glm::mat4 proj;
+	alignas(16) glm::mat4 model;
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 proj;
 };
 
 class HelloTriangleApplication
@@ -179,6 +180,8 @@ private:
 	std::vector<VkBuffer> m_uniformBuffers;
 	std::vector<VkDeviceMemory> m_uniformBuffersMemory;
 #pragma endregion
+	VkDescriptorPool m_descriptorPool;
+	std::vector<VkDescriptorSet> m_descriptorSets;
 public:
 	void run()
 	{
@@ -726,7 +729,7 @@ private:
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizer.lineWidth = 1.f;
 		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizer.depthBiasEnable = VK_FALSE;
 		rasterizer.depthBiasConstantFactor = 0.f;
 		rasterizer.depthBiasClamp = 0.f;
@@ -880,6 +883,7 @@ private:
 				VkDeviceSize offsets[] = { 0 };
 				vkCmdBindVertexBuffers(m_commandBuffers[i], 0, 1, vertexBuffers, offsets);
 				vkCmdBindIndexBuffer(m_commandBuffers[i], m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+				vkCmdBindDescriptorSets(m_commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_descriptorSets[i], 0, nullptr);
 
 				vkCmdDrawIndexed(m_commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
@@ -1009,6 +1013,7 @@ private:
 			vkFreeMemory(m_device, m_uniformBuffersMemory[i], nullptr);
 		}
 
+		vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
 		vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
 	}
 
@@ -1032,6 +1037,8 @@ private:
 		createGraphicsPipeline();
 		createFramebuffers();
 		createUniformBuffers();
+		createDescriptorPool();
+		createDescriptorSets();
 		createCommandBuffers();
 	}
 
@@ -1223,6 +1230,59 @@ private:
 	}
 #pragma endregion
 
+#pragma region descriptor pool and sets
+	void createDescriptorPool()
+	{
+		VkDescriptorPoolSize poolSize{};
+		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSize.descriptorCount = static_cast<uint32_t>(m_swapChainImages.size());
+
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 1;
+		poolInfo.pPoolSizes = &poolSize;
+		poolInfo.maxSets = static_cast<uint32_t>(m_swapChainImages.size());
+
+		if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS)
+			throw std::runtime_error("failed to create descriptor pool!");
+	}
+
+	void createDescriptorSets()
+	{
+		std::vector<VkDescriptorSetLayout> layouts(m_swapChainImages.size(), m_descriptorSetLayout);
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = m_descriptorPool;
+		allocInfo.descriptorSetCount = static_cast<uint32_t>(m_swapChainImages.size());
+		allocInfo.pSetLayouts = layouts.data();
+
+		m_descriptorSets.resize(m_swapChainImages.size());
+		if (vkAllocateDescriptorSets(m_device, &allocInfo, m_descriptorSets.data()) != VK_SUCCESS)
+			throw std::runtime_error("failed to allocate descriptor sets!");
+
+		for (size_t i = 0; i < m_swapChainImages.size(); i++)
+		{
+			VkDescriptorBufferInfo bufferInfo{};
+			bufferInfo.buffer = m_uniformBuffers[i];
+			bufferInfo.offset = 0;
+			bufferInfo.range = sizeof(UniformBufferObject);
+
+			VkWriteDescriptorSet descriptorWrite{};
+			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrite.dstSet = m_descriptorSets[i];
+			descriptorWrite.dstBinding = 0;
+			descriptorWrite.dstArrayElement = 0;
+			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrite.descriptorCount = 1;
+			descriptorWrite.pBufferInfo = &bufferInfo;
+			descriptorWrite.pImageInfo = nullptr;
+			descriptorWrite.pTexelBufferView = nullptr;
+
+			vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
+		}
+	}
+#pragma endregion
+
 #pragma region general structure
 	void initWindow()
 	{
@@ -1243,16 +1303,22 @@ private:
 		createSurface();
 		pickPhysicalDevice();
 		createLogicalDevice();
+		
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
 		createDescriptorLayout();
 		createGraphicsPipeline();
+		
 		createFramebuffers();
 		createCommandPool();
+		
 		createVertexBuffer();
 		createIndexBuffer();
 		createUniformBuffers();
+		createDescriptorPool();
+		createDescriptorSets();
+
 		createCommandBuffers();
 		createSyncObjects();
 	}
