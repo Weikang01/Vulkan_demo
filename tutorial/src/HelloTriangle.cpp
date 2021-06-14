@@ -91,6 +91,8 @@ private:
 	VkPipelineLayout m_pipelineLayout;
 	VkPipeline m_graphicsPipeline;
 #pragma endregion
+	VkCommandPool m_commandPool;
+	std::vector<VkCommandBuffer> m_commandBuffers;
 public:
 	void run()
 	{
@@ -661,17 +663,6 @@ private:
 		colorBlending.blendConstants[2] = 0.f;
 		colorBlending.blendConstants[3] = 0.f;
 
-		VkDynamicState dynamicStates[] =
-		{
-			VK_DYNAMIC_STATE_VIEWPORT,
-			VK_DYNAMIC_STATE_LINE_WIDTH
-		};
-
-		VkPipelineDynamicStateCreateInfo dynamicState{};
-		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-		dynamicState.dynamicStateCount = 2;
-		dynamicState.pDynamicStates = dynamicStates;
-
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = 0;
@@ -694,7 +685,7 @@ private:
 		pipelineInfo.pMultisampleState = &multisampling;
 		pipelineInfo.pDepthStencilState = nullptr;
 		pipelineInfo.pColorBlendState = &colorBlending;
-		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.pDynamicState = nullptr;
 		pipelineInfo.layout = m_pipelineLayout;
 		pipelineInfo.renderPass = m_renderPass;
 		pipelineInfo.subpass = 0;
@@ -736,6 +727,64 @@ private:
 	}
 #pragma endregion
 
+#pragma region command buffers
+	void createCommandPool()
+	{
+		QueueFamilyIndices queueFamilyIndices = findQueueFamilies(m_physicalDevice);
+
+		VkCommandPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+		poolInfo.flags = 0;
+
+		if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool))
+			throw std::runtime_error("failed to create command pool!");
+	}
+
+	void createCommandBuffers()
+	{
+		m_commandBuffers.resize(m_swapChainFramebuffers.size());
+		VkCommandBufferAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = m_commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = (uint32_t)m_commandBuffers.size();
+
+		if (vkAllocateCommandBuffers(m_device, &allocInfo, m_commandBuffers.data()))
+			throw std::runtime_error("failed to allocate buffers!");
+
+		for (size_t i = 0; i < m_commandBuffers.size(); i++)
+		{
+			VkCommandBufferBeginInfo beginInfo{};
+			beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			beginInfo.flags = 0;
+			beginInfo.pInheritanceInfo = nullptr;
+
+			if (vkBeginCommandBuffer(m_commandBuffers[i], &beginInfo))
+				throw std::runtime_error("failed to begin recording command buffer!");
+
+			VkRenderPassBeginInfo renderPassInfo{};
+			renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			renderPassInfo.renderPass = m_renderPass;
+			renderPassInfo.framebuffer = m_swapChainFramebuffers[i];
+			renderPassInfo.renderArea.offset = { 0,0 };
+			renderPassInfo.renderArea.extent = m_swapChainExtent;
+			VkClearValue clearColor = { 0.f ,0.f ,0.f ,1.f };
+			renderPassInfo.clearValueCount = 1;
+			renderPassInfo.pClearValues = &clearColor;
+
+			vkCmdBeginRenderPass(m_commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+			vkCmdBindPipeline(m_commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_graphicsPipeline);
+			vkCmdDraw(m_commandBuffers[i], 3, 1, 0, 0);
+
+			vkCmdEndRenderPass(m_commandBuffers[i]);
+			if (vkEndCommandBuffer(m_commandBuffers[i]) != VK_SUCCESS)
+				throw std::runtime_error("failed to record command buffer!");
+		}
+	}
+#pragma endregion
+
 #pragma region general structure
 	void initWindow()
 	{
@@ -759,6 +808,8 @@ private:
 		createRenderPass();
 		createGraphicsPipeline();
 		createFramebuffers();
+		createCommandPool();
+		createCommandBuffers();
 	}
 
 	void mainLoop()
@@ -780,6 +831,7 @@ private:
 		for (auto imageView:m_swapChainImageViews)
 			vkDestroyImageView(m_device, imageView, nullptr);
 
+		vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 		vkDestroyPipeline(m_device, m_graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
 		vkDestroyRenderPass(m_device, m_renderPass, nullptr);
