@@ -24,6 +24,7 @@ struct Vertex
 {
 	glm::vec2 pos;
 	glm::vec3 color;
+	glm::vec2 texCoord;
 
 	static VkVertexInputBindingDescription getBindingDescription()
 	{
@@ -38,7 +39,7 @@ struct Vertex
 		return bindingDescription;
 	}
 
-	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions()
+	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions()
 	{
 		// float  : VK_FORMAT_R32_SFLOAT
 		// vec2   : VK_FORMAT_R32G32_SFLOAT
@@ -47,7 +48,7 @@ struct Vertex
 		// ivec2  : VK_FORMAT_R32G32_SINT
 		// uvec4  : VK_FORMAT_R32G32B32A32_UINT
 		// double : VK_FORMAT_R64_SFLOAT
-		std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 		attributeDescriptions[0].binding = 0;
 		attributeDescriptions[0].location = 0;
 		attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -58,15 +59,20 @@ struct Vertex
 		attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
 		attributeDescriptions[1].offset = offsetof(Vertex, color);
 
+		attributeDescriptions[2].binding = 0;
+		attributeDescriptions[2].location = 2;
+		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
 		return attributeDescriptions;
 	}
 };
 
 const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-	{{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}},
-	{{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}}
+	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+	{{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+	{{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+	{{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
@@ -700,7 +706,7 @@ private:
 		viewport.width = (float)m_swapChainExtent.width;
 		viewport.height = (float)m_swapChainExtent.height;
 		viewport.minDepth = 0.f;
-		viewport.maxDepth = 0.f;
+		viewport.maxDepth = 1.f;
 
 		VkRect2D scissor{};
 		scissor.offset = { 0, 0 };
@@ -730,10 +736,6 @@ private:
 		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 		multisampling.sampleShadingEnable = VK_FALSE;
 		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-		multisampling.minSampleShading = 1.f;
-		multisampling.pSampleMask = nullptr;
-		multisampling.alphaToCoverageEnable = VK_FALSE;
-		multisampling.alphaToOneEnable = VK_FALSE;
 
 		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
 		colorBlendAttachment.colorWriteMask = 
@@ -1031,6 +1033,8 @@ private:
 		createDescriptorPool();
 		createDescriptorSets();
 		createCommandBuffers();
+
+		m_imagesInFlight.resize(m_swapChainImages.size(), VK_NULL_HANDLE);
 	}
 
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
@@ -1179,21 +1183,30 @@ private:
 #pragma endregion
 
 #pragma region descriptor layout and uniform buffers
-	void createDescriptorLayout()
+	void createDescriptorSetLayout()
 	{
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
 		uboLayoutBinding.binding = 0;
-		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		uboLayoutBinding.descriptorCount = 1;
-		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		uboLayoutBinding.pImmutableSamplers = nullptr;
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+		VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+		samplerLayoutBinding.binding = 1;
+		samplerLayoutBinding.descriptorCount = 1;
+		samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		samplerLayoutBinding.pImmutableSamplers = nullptr;
+		samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding , samplerLayoutBinding };
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layoutInfo.bindingCount = 1;
-		layoutInfo.pBindings = &uboLayoutBinding;
+		layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		layoutInfo.pBindings = bindings.data();
 
-		if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorSetLayout))
+		if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
 			throw std::runtime_error("failed to create descriptor set layout!");
 	}
 
@@ -1235,14 +1248,17 @@ private:
 #pragma region descriptor pool and sets
 	void createDescriptorPool()
 	{
-		VkDescriptorPoolSize poolSize{};
-		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSize.descriptorCount = static_cast<uint32_t>(m_swapChainImages.size());
+		std::array<VkDescriptorPoolSize, 2> poolSizes;
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(m_swapChainImages.size());
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(m_swapChainImages.size());
+
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		poolInfo.poolSizeCount = 1;
-		poolInfo.pPoolSizes = &poolSize;
+		poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+		poolInfo.pPoolSizes = poolSizes.data();
 		poolInfo.maxSets = static_cast<uint32_t>(m_swapChainImages.size());
 
 		if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS)
@@ -1269,18 +1285,30 @@ private:
 			bufferInfo.offset = 0;
 			bufferInfo.range = sizeof(UniformBufferObject);
 
-			VkWriteDescriptorSet descriptorWrite{};
-			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrite.dstSet = m_descriptorSets[i];
-			descriptorWrite.dstBinding = 0;
-			descriptorWrite.dstArrayElement = 0;
-			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			descriptorWrite.descriptorCount = 1;
-			descriptorWrite.pBufferInfo = &bufferInfo;
-			descriptorWrite.pImageInfo = nullptr;
-			descriptorWrite.pTexelBufferView = nullptr;
+			VkDescriptorImageInfo imageInfo{};
+			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			imageInfo.imageView = m_textureImageView;
+			imageInfo.sampler = m_textureSampler;
 
-			vkUpdateDescriptorSets(m_device, 1, &descriptorWrite, 0, nullptr);
+			std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[0].dstSet = m_descriptorSets[i];
+			descriptorWrites[0].dstBinding = 0;
+			descriptorWrites[0].dstArrayElement = 0;
+			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrites[0].descriptorCount = 1;
+			descriptorWrites[0].pBufferInfo = &bufferInfo;
+
+			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[1].dstSet = m_descriptorSets[i];
+			descriptorWrites[1].dstBinding = 1;
+			descriptorWrites[1].dstArrayElement = 0;
+			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			descriptorWrites[1].descriptorCount = 1;
+			descriptorWrites[1].pImageInfo = &imageInfo;
+
+			vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 		}
 	}
 #pragma endregion
@@ -1347,8 +1375,8 @@ private:
 		VkImageCreateInfo imageInfo{};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 		imageInfo.imageType = VK_IMAGE_TYPE_2D;
-		imageInfo.extent.width = static_cast<uint32_t>(width);
-		imageInfo.extent.height = static_cast<uint32_t>(height);
+		imageInfo.extent.width = width;
+		imageInfo.extent.height = height;
 		imageInfo.extent.depth = 1;
 		imageInfo.mipLevels = 1;
 		imageInfo.arrayLayers = 1;
@@ -1472,18 +1500,22 @@ private:
 
 	void createTextureSampler()
 	{
+		VkPhysicalDeviceProperties properties{};
+		vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
+
 		VkSamplerCreateInfo samplerInfo{};
 		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 		samplerInfo.magFilter = VK_FILTER_LINEAR;
 		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		// VK_SAMPLER_ADDRESS_MODE_REPEAT : Repeat the texture when going beyond the image dimensions
+		// VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT : Like repeat, but inverts the coordinates to mirror the image when going beyond the dimensions
+		// VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE : Take the color of the edge closest to the coordinate beyond the image dimensions
+		// VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE : Like clamp to edge, but instead uses the edge opposite to the closest edge
+		// VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : Return a solid color when sampling beyond the dimensions of the image
 		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		samplerInfo.anisotropyEnable = VK_TRUE;
-
-		VkPhysicalDeviceProperties properties{};
-		vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
-
 		samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
 		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
 		samplerInfo.unnormalizedCoordinates = VK_FALSE;
@@ -1523,7 +1555,7 @@ private:
 		createSwapChain();
 		createImageViews();
 		createRenderPass();
-		createDescriptorLayout();
+		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		
 		createFramebuffers();
@@ -1632,6 +1664,7 @@ int main()
 {
 	HelloTriangleApplication app;
 
+	system("src\\Shaders\\hello_triangle_compile.bat");
 	try
 	{
 		app.run();
