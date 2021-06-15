@@ -16,6 +16,7 @@ vulkan_sdk = "E:/VulkanSDK/1.2.176.1"
 IncludeDir = {}
 IncludeDir["GLFW"] = "library/GLFW/include"
 IncludeDir["glm"] = "library/glm"
+IncludeDir["stb"] = "library/stb"
 IncludeDir["vulkan"] = vulkan_sdk .. "/include"
 
 LibDir = {}
@@ -37,6 +38,8 @@ project "tutorial"
     {
         "%{prj.name}/src/**.h",
         "%{prj.name}/src/**.cpp",
+        "%{prj.name}/src/Shaders/**.vert",
+        "%{prj.name}/src/Shaders/**.frag"
     }
 
     includedirs
@@ -44,7 +47,8 @@ project "tutorial"
         "%{prj.name}/src",
         "%{IncludeDir.vulkan}",
         "%{IncludeDir.GLFW}",
-        "%{IncludeDir.glm}"
+        "%{IncludeDir.glm}",
+        "%{IncludeDir.stb}"
     }
 
     libdirs
