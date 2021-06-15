@@ -7,3 +7,6 @@
 [submodule "library/stb"]
 	path = library/stb
 	url = https://github.com/Weikang01/stb
+[submodule "library/tinyobjloader"]
+	path = library/tinyobjloader
+	url = https://github.com/Weikang01/tinyobjloader
