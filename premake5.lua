@@ -17,6 +17,7 @@ IncludeDir = {}
 IncludeDir["GLFW"] = "library/GLFW/include"
 IncludeDir["glm"] = "library/glm"
 IncludeDir["stb"] = "library/stb"
+IncludeDir["tinyobjloader"] = "library/tinyobjloader"
 IncludeDir["vulkan"] = vulkan_sdk .. "/include"
 
 LibDir = {}
@@ -48,7 +49,8 @@ project "tutorial"
         "%{IncludeDir.vulkan}",
         "%{IncludeDir.GLFW}",
         "%{IncludeDir.glm}",
-        "%{IncludeDir.stb}"
+        "%{IncludeDir.stb}",
+        "%{IncludeDir.tinyobjloader}"
     }
 
     libdirs
